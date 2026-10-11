@@ -1,0 +1,708 @@
+
+--============================================================
+-- ENEMY ALERT + ESP + LANDMINE ESP + LIGHTING
+-- Menu: RightControl
+--============================================================
+
+local Players = game:GetService("Players")
+local SoundService = game:GetService("SoundService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+
+local LP = Players.LocalPlayer
+local PG = LP:WaitForChild("PlayerGui")
+
+--============================================================
+-- CONFIG
+--============================================================
+
+local CONFIG = {
+    Sniper = {
+        Folder = "Snipers",
+        Alert = true,
+        ESP = true,
+        AimTolerance = 14,
+        Proximity = 0,
+        Color = Color3.fromRGB(255, 65, 65),
+    },
+
+    Rifleman = {
+        Folder = "SovietRiflemen",
+        Alert = true,
+        ESP = true,
+        Proximity = 35,
+        Color = Color3.fromRGB(255, 180, 65),
+    },
+
+    Angel = {
+        Folder = "Angels",
+        Alert = true,
+        ESP = true,
+        Proximity = 55,
+        Color = Color3.fromRGB(200, 120, 255),
+    },
+
+    Landmine = {
+        Folder = "Landmines",
+        ESP = true,
+        Color = Color3.fromRGB(255, 55, 35),
+    },
+}
+
+local GLOBAL_ALERTS = true
+local SOUND_ID = "rbxassetid://9118823101"
+local ALERT_COOLDOWN = 3
+local SCAN_INTERVAL = 0.15
+
+--============================================================
+-- CLEANUP OLD INSTANCE
+--============================================================
+
+local old = PG:FindFirstChild("EnemyAlertPanel")
+if old then
+    old:Destroy()
+end
+
+local running = true
+local lastAlert = {}
+local espObjects = {}
+
+--============================================================
+-- GUI
+--============================================================
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "EnemyAlertPanel"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999
+gui.Parent = PG
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(330, 440)
+main.Position = UDim2.new(0, 30, 0.2, 0)
+main.BackgroundColor3 = Color3.fromRGB(22, 24, 32)
+main.BorderSizePixel = 0
+main.Parent = gui
+
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+
+local outline = Instance.new("UIStroke")
+outline.Color = Color3.fromRGB(90, 100, 130)
+outline.Thickness = 1
+outline.Parent = main
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -20, 0, 42)
+title.Position = UDim2.fromOffset(10, 0)
+title.BackgroundTransparency = 1
+title.Text = "ENEMY ALERT | CONTROL"
+title.TextColor3 = Color3.fromRGB(240, 240, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
+title.Parent = main
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Size = UDim2.new(1, -20, 0, 24)
+subtitle.Position = UDim2.fromOffset(10, 39)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "RightControl — show / hide menu"
+subtitle.TextColor3 = Color3.fromRGB(155, 165, 185)
+subtitle.Font = Enum.Font.Gotham
+subtitle.TextSize = 11
+subtitle.Parent = main
+
+local content = Instance.new("ScrollingFrame")
+content.Name = "ButtonContainer"
+content.Position = UDim2.fromOffset(12, 68)
+content.Size = UDim2.new(1, -24, 1, -80)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.ScrollBarThickness = 5
+content.ScrollBarImageColor3 = Color3.fromRGB(100, 110, 140)
+content.CanvasSize = UDim2.new(0, 0, 0, 0)
+content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+content.ScrollingDirection = Enum.ScrollingDirection.Y
+content.Parent = main
+
+local layout = Instance.new("UIListLayout")
+layout.Padding = UDim.new(0, 6)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = content
+
+local buttons = {}
+local order = 0
+
+local function makeButton(text, callback)
+    order += 1
+
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -6, 0, 32)
+    b.BackgroundColor3 = Color3.fromRGB(43, 47, 61)
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(240, 240, 245)
+    b.Font = Enum.Font.GothamMedium
+    b.TextSize = 12
+    b.LayoutOrder = order
+    b.Parent = content
+
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    b.Activated:Connect(callback)
+
+    return b
+end
+
+local function updateButton(name, kind)
+    local b = buttons[name .. kind]
+    if not b then return end
+
+    local enabled = CONFIG[name][kind]
+    local label = kind == "Alert" and "Notifications" or "ESP"
+
+    b.Text = name .. " | " .. label .. ": "
+        .. (enabled and "ON" or "OFF")
+
+    b.BackgroundColor3 = enabled
+        and Color3.fromRGB(40, 95, 75)
+        or Color3.fromRGB(55, 48, 55)
+end
+
+for _, name in ipairs({"Sniper", "Rifleman", "Angel"}) do
+    for _, kind in ipairs({"Alert", "ESP"}) do
+        local n, k = name, kind
+
+        buttons[n .. k] = makeButton("", function()
+            CONFIG[n][k] = not CONFIG[n][k]
+            updateButton(n, k)
+        end)
+
+        updateButton(n, k)
+    end
+end
+
+buttons.LandmineESP = makeButton("", function()
+    CONFIG.Landmine.ESP = not CONFIG.Landmine.ESP
+
+    buttons.LandmineESP.Text = "Landmine | ESP: "
+        .. (CONFIG.Landmine.ESP and "ON" or "OFF")
+
+    buttons.LandmineESP.BackgroundColor3 = CONFIG.Landmine.ESP
+        and Color3.fromRGB(130, 55, 40)
+        or Color3.fromRGB(55, 48, 55)
+end)
+
+buttons.LandmineESP.Text = "Landmine | ESP: ON"
+buttons.LandmineESP.BackgroundColor3 = Color3.fromRGB(130, 55, 40)
+
+local globalButton
+globalButton = makeButton("ALL NOTIFICATIONS: ON", function()
+    GLOBAL_ALERTS = not GLOBAL_ALERTS
+
+    globalButton.Text = "ALL NOTIFICATIONS: "
+        .. (GLOBAL_ALERTS and "ON" or "OFF")
+
+    globalButton.BackgroundColor3 = GLOBAL_ALERTS
+        and Color3.fromRGB(40, 95, 75)
+        or Color3.fromRGB(55, 48, 55)
+end)
+
+--============================================================
+-- LIGHTING TOGGLE
+--============================================================
+
+local lightingEnabled = false
+local lightingConnections = {}
+local originalLighting = {}
+
+local lightingProperties = {
+    "Brightness",
+    "ClockTime",
+    "ExposureCompensation",
+    "GlobalShadows",
+    "Ambient",
+    "OutdoorAmbient",
+    "FogEnd",
+}
+
+local function captureOriginalLighting()
+    for _, property in ipairs(lightingProperties) do
+        pcall(function()
+            originalLighting[property] = Lighting[property]
+        end)
+    end
+end
+
+captureOriginalLighting()
+
+local function applyLighting()
+    if not lightingEnabled then
+        return
+    end
+
+    pcall(function()
+        Lighting.Brightness = 3
+        Lighting.ClockTime = 14
+        Lighting.ExposureCompensation = 0.25
+        Lighting.GlobalShadows = true
+        Lighting.Ambient = Color3.fromRGB(140, 140, 140)
+        Lighting.OutdoorAmbient = Color3.fromRGB(170, 170, 170)
+        Lighting.FogEnd = 100000
+    end)
+end
+
+local function stopLightingWatchers()
+    for _, connection in ipairs(lightingConnections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+
+    table.clear(lightingConnections)
+end
+
+local function setLightingEnabled(enabled)
+    lightingEnabled = enabled
+    stopLightingWatchers()
+
+    if enabled then
+        applyLighting()
+
+        for _, property in ipairs(lightingProperties) do
+            local connection =
+                Lighting:GetPropertyChangedSignal(property):Connect(function()
+                    if lightingEnabled then
+                        task.defer(applyLighting)
+                    end
+                end)
+
+            table.insert(lightingConnections, connection)
+        end
+    else
+        for property, value in pairs(originalLighting) do
+            pcall(function()
+                Lighting[property] = value
+            end)
+        end
+    end
+
+    if buttons.Lighting then
+        buttons.Lighting.Text = lightingEnabled
+            and "☑️ Lighting: ON"
+            or "☐ Lighting: OFF"
+
+        buttons.Lighting.BackgroundColor3 = lightingEnabled
+            and Color3.fromRGB(40, 95, 75)
+            or Color3.fromRGB(43, 47, 61)
+    end
+end
+
+buttons.Lighting = makeButton("☐ Lighting: OFF", function()
+    setLightingEnabled(not lightingEnabled)
+end)
+
+makeButton("CLOSE MENU", function()
+    main.Visible = false
+end)
+
+--============================================================
+-- DRAG MENU
+--============================================================
+
+local dragging = false
+local dragStart
+local startPos
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (
+        input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+    ) then
+        local delta = input.Position - dragStart
+
+        main.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        dragging = false
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+
+    if input.KeyCode == Enum.KeyCode.RightControl then
+        main.Visible = not main.Visible
+    end
+end)
+
+--============================================================
+-- ALERT BANNER + SOUND
+--============================================================
+
+local banner = Instance.new("TextLabel")
+banner.Name = "ThreatBanner"
+banner.AnchorPoint = Vector2.new(0.5, 0)
+banner.Position = UDim2.new(0.5, 0, 0.1, 0)
+banner.Size = UDim2.fromOffset(470, 58)
+banner.BackgroundColor3 = Color3.fromRGB(50, 20, 25)
+banner.BackgroundTransparency = 0.1
+banner.BorderSizePixel = 0
+banner.Font = Enum.Font.GothamBold
+banner.TextSize = 19
+banner.TextColor3 = Color3.new(1, 1, 1)
+banner.Visible = false
+banner.Parent = gui
+
+Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 8)
+
+local sound = Instance.new("Sound")
+sound.Name = "EnemyAlertSound"
+sound.SoundId = SOUND_ID
+sound.Volume = 1
+sound.Parent = SoundService
+
+local bannerVersion = 0
+
+local function alert(name, model, message)
+    if not running or not GLOBAL_ALERTS then return end
+    if not CONFIG[name] or not CONFIG[name].Alert then return end
+
+    local key = name .. "_" .. model:GetFullName()
+    local now = os.clock()
+
+    if now - (lastAlert[key] or -math.huge) < ALERT_COOLDOWN then
+        return
+    end
+
+    lastAlert[key] = now
+    bannerVersion += 1
+    local version = bannerVersion
+
+    banner.Text = message
+    banner.BackgroundColor3 = CONFIG[name].Color
+    banner.Visible = true
+
+    pcall(function()
+        sound:Play()
+    end)
+
+    task.delay(2, function()
+        if running and bannerVersion == version then
+            banner.Visible = false
+        end
+    end)
+end
+
+--============================================================
+-- CHARACTER HELPERS
+--============================================================
+
+local function rootOf(character)
+    if not character then return nil end
+
+    return character:FindFirstChild("HumanoidRootPart")
+        or character:FindFirstChild("Torso")
+end
+
+local function aliveCharacter(character)
+    local hum = character
+        and character:FindFirstChildOfClass("Humanoid")
+
+    return hum and hum.Health > 0
+end
+
+local function closestPlayerTo(position)
+    local bestPlayer
+    local bestDistance = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        local character = player.Character
+        local root = rootOf(character)
+
+        if root and aliveCharacter(character) then
+            local d = (root.Position - position).Magnitude
+            local head = character:FindFirstChild("Head")
+
+            if head then
+                d = math.min(
+                    d,
+                    (head.Position - position).Magnitude
+                )
+            end
+
+            if d < bestDistance then
+                bestPlayer = player
+                bestDistance = d
+            end
+        end
+    end
+
+    return bestPlayer, bestDistance
+end
+
+local function sniperTargetsUs(model)
+    if model:GetAttribute("State") ~= "Aiming" then
+        return false
+    end
+
+    local aim = model:GetAttribute("AimPosition")
+
+    if typeof(aim) ~= "Vector3" then
+        return false
+    end
+
+    local player, distance = closestPlayerTo(aim)
+
+    return player == LP
+        and distance ~= math.huge
+        and distance <= CONFIG.Sniper.AimTolerance
+end
+
+--============================================================
+-- ESP
+--============================================================
+
+local function removeESP(obj)
+    local data = espObjects[obj]
+    if not data then return end
+
+    pcall(function()
+        data.highlight:Destroy()
+    end)
+
+    pcall(function()
+        data.billboard:Destroy()
+    end)
+
+    espObjects[obj] = nil
+end
+
+local function getAdornee(obj)
+    if obj:IsA("Model") or obj:IsA("BasePart") then
+        return obj
+    end
+
+    return nil
+end
+
+local function getLabelPart(obj)
+    if obj:IsA("BasePart") then
+        return obj
+    elseif obj:IsA("Model") then
+        return obj:FindFirstChild("Head")
+            or obj:FindFirstChild("HumanoidRootPart")
+            or obj.PrimaryPart
+            or obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    return obj:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function addESP(obj, name, labelText, color)
+    if espObjects[obj] then return end
+
+    local adornee = getAdornee(obj)
+    if not adornee then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "LocalESPHighlight"
+    highlight.Adornee = adornee
+    highlight.FillColor = color
+    highlight.OutlineColor = color
+    highlight.FillTransparency = 0.78
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = gui
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "LocalESPLabel"
+    billboard.Adornee = getLabelPart(obj)
+    billboard.Size = UDim2.fromOffset(170, 27)
+    billboard.StudsOffset = Vector3.new(0, 2.8, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Enabled = billboard.Adornee ~= nil
+    billboard.Parent = gui
+
+    local text = Instance.new("TextLabel")
+    text.Size = UDim2.fromScale(1, 1)
+    text.BackgroundTransparency = 1
+    text.Text = labelText
+    text.TextColor3 = color
+    text.TextStrokeTransparency = 0.15
+    text.Font = Enum.Font.GothamBold
+    text.TextSize = 14
+    text.Parent = billboard
+
+    espObjects[obj] = {
+        highlight = highlight,
+        billboard = billboard,
+        name = name,
+    }
+end
+
+local function getFolder(name)
+    return workspace:FindFirstChild(CONFIG[name].Folder)
+end
+
+local function collectEnemyModels(name)
+    local folder = getFolder(name)
+    local result = {}
+
+    if not folder then return result end
+
+    for _, obj in ipairs(folder:GetChildren()) do
+        if obj:IsA("Model") then
+            table.insert(result, obj)
+        end
+    end
+
+    return result
+end
+
+local function collectMines()
+    local folder = workspace:FindFirstChild(CONFIG.Landmine.Folder)
+    local result = {}
+
+    if not folder then return result end
+
+    for _, obj in ipairs(folder:GetDescendants()) do
+        if obj:IsA("Model") then
+            table.insert(result, obj)
+        elseif obj:IsA("BasePart")
+            and not obj:FindFirstAncestorOfClass("Model") then
+
+            table.insert(result, obj)
+        end
+    end
+
+    for _, obj in ipairs(folder:GetChildren()) do
+        if obj.Name == "Landmine"
+            and (obj:IsA("Model") or obj:IsA("BasePart")) then
+
+            table.insert(result, obj)
+        end
+    end
+
+    return result
+end
+
+--============================================================
+-- MAIN SCAN
+--============================================================
+
+task.spawn(function()
+    while running do
+        local character = LP.Character
+        local myRoot = rootOf(character)
+        local activeObjects = {}
+
+        for _, name in ipairs({"Sniper", "Rifleman", "Angel"}) do
+            local cfg = CONFIG[name]
+
+            for _, model in ipairs(collectEnemyModels(name)) do
+                activeObjects[model] = true
+
+                if cfg.ESP then
+                    addESP(model, name, name, cfg.Color)
+                else
+                    removeESP(model)
+                end
+
+                local enemyRoot = rootOf(model) or model.PrimaryPart
+
+                if enemyRoot and myRoot and aliveCharacter(character) then
+                    local distance =
+                        (enemyRoot.Position - myRoot.Position).Magnitude
+
+                    if name == "Sniper" then
+                        if sniperTargetsUs(model) then
+                            alert(
+                                name,
+                                model,
+                                "⚠️ SNIPER AIMING AT YOU!"
+                            )
+                        end
+                    elseif cfg.Proximity > 0
+                        and distance <= cfg.Proximity then
+
+                        alert(
+                            name,
+                            model,
+                            "⚠️ " .. string.upper(name)
+                                .. " NEARBY [" .. math.floor(distance)
+                                .. " studs]"
+                        )
+                    end
+                end
+            end
+        end
+
+        for _, mine in ipairs(collectMines()) do
+            activeObjects[mine] = true
+
+            if CONFIG.Landmine.ESP then
+                addESP(
+                    mine,
+                    "Landmine",
+                    "⚠️ LANDMINE",
+                    CONFIG.Landmine.Color
+                )
+            else
+                removeESP(mine)
+            end
+        end
+
+        for obj in pairs(espObjects) do
+            if not obj.Parent or not activeObjects[obj] then
+                removeESP(obj)
+            end
+        end
+
+        task.wait(SCAN_INTERVAL)
+    end
+end)
+
+--============================================================
+-- CLEANUP
+--============================================================
+
+gui.Destroying:Connect(function()
+    running = false
+    lightingEnabled = false
+
+    for _, connection in ipairs(lightingConnections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
+    end
+    table.clear(lightingConnections)
+
+    for obj in pairs(espObjects) do
+        removeESP(obj)
+    end
+
+    pcall(function()
+        sound:Destroy()
+    end)
+end)
+
+print("[EnemyAlertPanel] Running | RightControl = menu")
